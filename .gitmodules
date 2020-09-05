@@ -1,0 +1,3 @@
+[submodule "dbg/vendor/linenoise"]
+    path = dbg/vendor/linenoise
+    url = https://github.com/antirez/linenoise.git

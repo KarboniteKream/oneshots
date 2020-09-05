@@ -1,5 +1,5 @@
 all: examples vendor
-	@$(CXX) main.cpp vendor/linenoise.o -o dbg
+	@$(CXX) main.cpp vendor/linenoise.o -o dbg -Wall -Wextra -pedantic
 
 .PHONY: examples
 examples:

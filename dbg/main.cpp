@@ -176,12 +176,18 @@ private:
     void handle_command(const std::string &line);
     void continue_execution();
     void set_breakpoint(std::intptr_t address);
+    void remove_breakpoint(std::intptr_t address);
     void dump_registers();
     uint64_t read_memory(uint64_t address);
     void write_memory(uint64_t address, uint64_t value);
     uint64_t get_pc();
     void set_pc(uint64_t pc);
+    void step_single_instruction();
+    void step_single_instruction_with_breakpoint_check();
     void step_over_breakpoint();
+    void step_in();
+    void step_over();
+    void step_out();
     void wait_for_signal();
     dwarf::die get_function_from_pc(uint64_t pc);
     dwarf::line_table::iterator get_line_entry_from_pc(uint64_t pc);
@@ -228,8 +234,9 @@ void debugger::handle_command(const std::string &line) {
     if (is_prefix(command, "continue")) {
         continue_execution();
     } else if (is_prefix(command, "breakpoint")) {
-        std::string address {args[1], 2};
-        set_breakpoint(std::stol(address, nullptr, 16));
+        std::string str {args[1], 2};
+        uint64_t address = std::stol(str, nullptr, 16);
+        set_breakpoint(address);
     } else if (is_prefix(command, "register")) {
         if (is_prefix(args[1], "dump")) {
             dump_registers();
@@ -253,6 +260,16 @@ void debugger::handle_command(const std::string &line) {
             uint64_t value = std::stol(str, nullptr, 16);
             write_memory(address, value);
         }
+    } else if (is_prefix(command, "step")) {
+        step_in();
+    } else if (is_prefix(command, "stepi")) {
+        step_single_instruction_with_breakpoint_check();
+        dwarf::line_table::iterator line_entry = get_line_entry_from_pc(get_pc());
+        print_source(line_entry->file->path, line_entry->line);
+    } else if (is_prefix(command, "next")) {
+        step_over();
+    } else if (is_prefix(command, "finish")) {
+        step_out();
     } else {
         std::cerr << "Unknown command" << std::endl;
     }
@@ -269,6 +286,14 @@ void debugger::set_breakpoint(std::intptr_t address) {
     bp.enable();
     m_breakpoints.emplace(address, bp);
     std::cout << "Set breakpoint at address 0x" << std::hex << address << std::endl;
+}
+
+void debugger::remove_breakpoint(std::intptr_t address) {
+    if (m_breakpoints.at(address).is_enabled()) {
+        m_breakpoints.at(address).disable();
+    }
+
+    m_breakpoints.erase(address);
 }
 
 void debugger::dump_registers() {
@@ -295,6 +320,19 @@ void debugger::set_pc(uint64_t pc) {
     set_register_value(m_pid, reg::rip, pc);
 }
 
+void debugger::step_single_instruction() {
+    ptrace(PTRACE_SINGLESTEP, m_pid, nullptr, nullptr);
+    wait_for_signal();
+}
+
+void debugger::step_single_instruction_with_breakpoint_check() {
+    if (m_breakpoints.count(get_pc())) {
+        step_over_breakpoint();
+    } else {
+        step_single_instruction();
+    }
+}
+
 void debugger::step_over_breakpoint() {
     uint64_t pc = get_pc();
 
@@ -303,10 +341,73 @@ void debugger::step_over_breakpoint() {
 
         if (bp.is_enabled()) {
             bp.disable();
-            ptrace(PTRACE_SINGLESTEP, m_pid, nullptr, nullptr);
-            wait_for_signal();
+            step_single_instruction();
             bp.enable();
         }
+    }
+}
+
+void debugger::step_in() {
+    unsigned line = get_line_entry_from_pc(get_pc())->line;
+
+    while (get_line_entry_from_pc(get_pc())->line == line) {
+        step_single_instruction_with_breakpoint_check();
+    }
+
+    dwarf::line_table::iterator line_entry = get_line_entry_from_pc(get_pc());
+    print_source(line_entry->file->path, line_entry->line);
+}
+
+void debugger::step_over() {
+    dwarf::die func = get_function_from_pc(get_pc());
+    dwarf::taddr func_entry = at_low_pc(func);
+    dwarf::taddr func_end = at_high_pc(func);
+
+    dwarf::line_table::iterator line = get_line_entry_from_pc(func_entry);
+    dwarf::line_table::iterator start_line = get_line_entry_from_pc(get_pc());
+
+    std::vector<std::intptr_t> to_delete {};
+
+    while (line->address < func_end) {
+        auto address = line->address;
+
+        if (address != start_line->address && !m_breakpoints.count(address)) {
+            set_breakpoint(address);
+            to_delete.push_back(address);
+        }
+
+        line++;
+    }
+
+    uint64_t frame_pointer = get_register_value(m_pid, reg::rbp);
+    uint64_t return_address = read_memory(frame_pointer + sizeof(uint64_t));
+
+    if (!m_breakpoints.count(return_address)) {
+        set_breakpoint(return_address);
+        to_delete.push_back(return_address);
+    }
+
+    continue_execution();
+
+    for (auto address : to_delete) {
+        remove_breakpoint(address);
+    }
+}
+
+void debugger::step_out() {
+    uint64_t frame_pointer = get_register_value(m_pid, reg::rbp);
+    uint64_t return_address = read_memory(frame_pointer + sizeof(uint64_t));
+
+    bool should_remove_breakpoint = false;
+    if (!m_breakpoints.count(return_address)) {
+        set_breakpoint(return_address);
+        should_remove_breakpoint = true;
+    }
+
+    continue_execution();
+
+    if (should_remove_breakpoint) {
+        remove_breakpoint(return_address);
     }
 }
 

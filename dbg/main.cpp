@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <fcntl.h>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -182,6 +183,11 @@ private:
     void set_pc(uint64_t pc);
     void step_over_breakpoint();
     void wait_for_signal();
+    dwarf::die get_function_from_pc(uint64_t pc);
+    dwarf::line_table::iterator get_line_entry_from_pc(uint64_t pc);
+    void print_source(const std::string &filename, unsigned line, unsigned n_lines_context = 2);
+    siginfo_t get_signal_info();
+    void handle_sigtrap(siginfo_t info);
 };
 
 void debugger::run() {
@@ -290,13 +296,12 @@ void debugger::set_pc(uint64_t pc) {
 }
 
 void debugger::step_over_breakpoint() {
-    uint64_t location = get_pc() - 1;
+    uint64_t pc = get_pc();
 
-    if (m_breakpoints.count(location)) {
-        breakpoint &bp = m_breakpoints.at(location);
+    if (m_breakpoints.count(pc)) {
+        breakpoint &bp = m_breakpoints.at(pc);
 
         if (bp.is_enabled()) {
-            set_pc(location);
             bp.disable();
             ptrace(PTRACE_SINGLESTEP, m_pid, nullptr, nullptr);
             wait_for_signal();
@@ -309,6 +314,120 @@ void debugger::wait_for_signal() {
     int wait_status;
     int options = 0;
     waitpid(m_pid, &wait_status, options);
+
+    siginfo_t info = get_signal_info();
+
+    switch (info.si_signo) {
+        case SIGTRAP:
+            handle_sigtrap(info);
+            break;
+
+        case SIGSEGV:
+            std::cout << "Segmentation fault. Reason: " << info.si_code << std::endl;
+            break;
+
+        default:
+            std::cout << "Got signal: " << strsignal(info.si_signo) << std::endl;
+            break;
+    }
+}
+
+dwarf::die debugger::get_function_from_pc(uint64_t pc) {
+    for (const dwarf::compilation_unit &cu : m_dwarf.compilation_units()) {
+        if (!die_pc_range(cu.root()).contains(pc)) {
+            continue;
+        }
+
+        for (const dwarf::die &die : cu.root()) {
+            if (die.tag != dwarf::DW_TAG::subprogram) {
+                continue;
+            }
+
+            if (!die_pc_range(die).contains(pc)) {
+                continue;
+            }
+
+            return die;
+        }
+    }
+
+    throw std::out_of_range("Unknown function");
+}
+
+dwarf::line_table::iterator debugger::get_line_entry_from_pc(uint64_t pc) {
+    for (const dwarf::compilation_unit &cu : m_dwarf.compilation_units()) {
+        if (!die_pc_range(cu.root()).contains(pc)) {
+            continue;
+        }
+
+        const dwarf::line_table &lt = cu.get_line_table();
+        dwarf::line_table::iterator it = lt.find_address(pc);
+
+        if (it == lt.end()) {
+            throw std::out_of_range("Unknown line entry");
+        }
+
+        return it;
+    }
+
+    throw std::out_of_range("Unknown line entry");
+}
+
+void debugger::print_source(const std::string &filename, unsigned line, unsigned n_lines_context) {
+    std::ifstream file {filename};
+
+    unsigned start_line = line <= n_lines_context ? 1 : line - n_lines_context;
+    unsigned end_line = line + n_lines_context + 1 +
+                        (line < n_lines_context ? n_lines_context - line : 0);
+
+    char c {};
+    unsigned current_line = 1;
+
+    while (current_line != start_line && file.get(c)) {
+        if (c == '\n') {
+            current_line++;
+        }
+    }
+
+    std::cout << (current_line == line ? "> " : "  ");
+
+    while (current_line != end_line && file.get(c)) {
+        std::cout << c;
+
+        if (c == '\n') {
+            current_line++;
+            std::cout << (current_line == line ? "> " : "  ");
+        }
+    }
+
+    std::cout << std::endl;
+}
+
+siginfo_t debugger::get_signal_info() {
+    siginfo_t info;
+    ptrace(PTRACE_GETSIGINFO, m_pid, nullptr, &info);
+    return info;
+}
+
+void debugger::handle_sigtrap(siginfo_t info) {
+    switch (info.si_code) {
+        case SI_KERNEL:
+        case TRAP_BRKPT: {
+            uint64_t pc = get_pc() - 1;
+            set_pc(pc);
+            std::cout << "Hit breakpoint at address 0x" << std::hex << pc << std::endl;
+            dwarf::line_table::iterator line_entry = get_line_entry_from_pc(pc);
+            print_source(line_entry->file->path, line_entry->line);
+            return;
+        }
+
+        case TRAP_TRACE:
+            return;
+
+        default:
+            std::cout << "Unknown SIGTRAP code " << info.si_code << std::endl;
+            return;
+    }
 }
 
 int main(int argc, char **argv) {

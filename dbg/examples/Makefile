@@ -1,5 +1,6 @@
 all:
-	@$(CC) hello.c -o hello
+	$(CC) hello.c -g -o hello
+	$(CC) variables.c -g -o variables
 
 clean:
-	@rm -f hello
+	rm -f hello variables

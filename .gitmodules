@@ -1,3 +1,10 @@
 [submodule "dbg/vendor/linenoise"]
     path = dbg/vendor/linenoise
     url = https://github.com/antirez/linenoise.git
+    ignore = untracked
+
+[submodule "dbg/vendor/libelfin"]
+    path = dbg/vendor/libelfin
+    url = https://github.com/TartanLlama/libelfin.git
+    branch = fbreg
+    ignore = untracked

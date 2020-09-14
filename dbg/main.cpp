@@ -114,6 +114,64 @@ void set_register_value(pid_t pid, reg r, uint64_t value) {
     ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
 }
 
+enum class symbol_type {
+    notype,
+    object,
+    func,
+    section,
+    file,
+};
+
+symbol_type to_symbol_type(elf::stt sym) {
+    switch (sym) {
+        case elf::stt::notype:
+            return symbol_type::notype;
+
+        case elf::stt::object:
+            return symbol_type::object;
+
+        case elf::stt::func:
+            return symbol_type::func;
+
+        case elf::stt::section:
+            return symbol_type::section;
+
+        case elf::stt::file:
+            return symbol_type::file;
+
+        default:
+            return symbol_type::notype;
+    }
+}
+
+std::string to_string(symbol_type st) {
+    switch (st) {
+        case symbol_type::notype:
+            return "notype";
+
+        case symbol_type::object:
+            return "object";
+
+        case symbol_type::func:
+            return "func";
+
+        case symbol_type::section:
+            return "section";
+
+        case symbol_type::file:
+            return "file";
+
+        default:
+            return "notype";
+    }
+}
+
+struct symbol {
+    symbol_type type;
+    std::string name;
+    std::uintptr_t address;
+};
+
 class breakpoint {
 public:
     breakpoint(pid_t pid, std::intptr_t address)
@@ -175,7 +233,9 @@ private:
 
     void handle_command(const std::string &line);
     void continue_execution();
-    void set_breakpoint(std::intptr_t address);
+    void set_breakpoint_at_address(std::intptr_t address);
+    void set_breakpoint_at_function(const std::string &name);
+    void set_breakpoint_at_line(const std::string &file, unsigned line);
     void remove_breakpoint(std::intptr_t address);
     void dump_registers();
     uint64_t read_memory(uint64_t address);
@@ -194,6 +254,7 @@ private:
     void print_source(const std::string &filename, unsigned line, unsigned n_lines_context = 2);
     siginfo_t get_signal_info();
     void handle_sigtrap(siginfo_t info);
+    std::vector<symbol> lookup_symbol(const std::string &name);
 };
 
 void debugger::run() {
@@ -227,6 +288,15 @@ bool is_prefix(const std::string &str, const std::string &of) {
     return std::equal(str.begin(), str.end(), of.begin());
 }
 
+bool is_suffix(const std::string &str, const std::string &of) {
+    if (str.size() > of.size()) {
+        return false;
+    }
+
+    unsigned long diff = of.size() - str.size();
+    return std::equal(str.begin(), str.end(), of.begin() + diff);
+}
+
 void debugger::handle_command(const std::string &line) {
     std::vector<std::string> args = split(line, ' ');
     std::string command = args[0];
@@ -234,9 +304,16 @@ void debugger::handle_command(const std::string &line) {
     if (is_prefix(command, "continue")) {
         continue_execution();
     } else if (is_prefix(command, "breakpoint")) {
-        std::string str {args[1], 2};
-        uint64_t address = std::stol(str, nullptr, 16);
-        set_breakpoint(address);
+        if (args[1][0] == '0' && args[1][1] == 'x') {
+            std::string str {args[1], 2};
+            uint64_t address = std::stol(str, nullptr, 16);
+            set_breakpoint_at_address(address);
+        } else if (args[1].find(':') != std::string::npos) {
+            std::vector<std::string> file_and_line = split(args[1], ':');
+            set_breakpoint_at_line(file_and_line[0], stoi(file_and_line[1]));
+        } else {
+            set_breakpoint_at_function(args[1]);
+        }
     } else if (is_prefix(command, "register")) {
         if (is_prefix(args[1], "dump")) {
             dump_registers();
@@ -270,6 +347,13 @@ void debugger::handle_command(const std::string &line) {
         step_over();
     } else if (is_prefix(command, "finish")) {
         step_out();
+    } else if (is_prefix(command, "symbol")) {
+        std::vector<symbol> symbols = lookup_symbol(args[1]);
+
+        for (symbol &sym : symbols) {
+            std::cout << sym.name << ' ' << to_string(sym.type)
+                      << " 0x" << std::hex << sym.address << std::endl;
+        }
     } else {
         std::cerr << "Unknown command" << std::endl;
     }
@@ -281,11 +365,39 @@ void debugger::continue_execution() {
     wait_for_signal();
 }
 
-void debugger::set_breakpoint(std::intptr_t address) {
+void debugger::set_breakpoint_at_address(std::intptr_t address) {
     breakpoint bp {m_pid, address};
     bp.enable();
     m_breakpoints.emplace(address, bp);
     std::cout << "Set breakpoint at address 0x" << std::hex << address << std::endl;
+}
+
+void debugger::set_breakpoint_at_function(const std::string &name) {
+    for (const dwarf::compilation_unit &cu : m_dwarf.compilation_units()) {
+        for (const dwarf::die &die : cu.root()) {
+            if (die.has(dwarf::DW_AT::name) && at_name(die) == name) {
+                dwarf::taddr low_pc = at_low_pc(die);
+                dwarf::line_table::iterator entry = get_line_entry_from_pc(low_pc);
+                entry++; // Skip prologue.
+                set_breakpoint_at_address(entry->address);
+            }
+        }
+    }
+}
+
+void debugger::set_breakpoint_at_line(const std::string &file, unsigned line) {
+    for (const dwarf::compilation_unit &cu : m_dwarf.compilation_units()) {
+        if (is_suffix(file, at_name(cu.root()))) {
+            const dwarf::line_table &lt = cu.get_line_table();
+
+            for (const dwarf::line_table::entry &entry : lt) {
+                if (entry.is_stmt && entry.line == line) {
+                    set_breakpoint_at_address(entry.address);
+                    return;
+                }
+            }
+        }
+    }
 }
 
 void debugger::remove_breakpoint(std::intptr_t address) {
@@ -372,7 +484,7 @@ void debugger::step_over() {
         auto address = line->address;
 
         if (address != start_line->address && !m_breakpoints.count(address)) {
-            set_breakpoint(address);
+            set_breakpoint_at_address(address);
             to_delete.push_back(address);
         }
 
@@ -383,7 +495,7 @@ void debugger::step_over() {
     uint64_t return_address = read_memory(frame_pointer + sizeof(uint64_t));
 
     if (!m_breakpoints.count(return_address)) {
-        set_breakpoint(return_address);
+        set_breakpoint_at_address(return_address);
         to_delete.push_back(return_address);
     }
 
@@ -400,7 +512,7 @@ void debugger::step_out() {
 
     bool should_remove_breakpoint = false;
     if (!m_breakpoints.count(return_address)) {
-        set_breakpoint(return_address);
+        set_breakpoint_at_address(return_address);
         should_remove_breakpoint = true;
     }
 
@@ -529,6 +641,28 @@ void debugger::handle_sigtrap(siginfo_t info) {
             std::cout << "Unknown SIGTRAP code " << info.si_code << std::endl;
             return;
     }
+}
+
+std::vector<symbol> debugger::lookup_symbol(const std::string &name) {
+    std::vector<symbol> symbols;
+
+    for (const elf::section &section : m_elf.sections()) {
+        elf::sht type = section.get_hdr().type;
+
+        if (type != elf::sht::symtab && type != elf::sht::dynsym) {
+            continue;
+        }
+
+        for (elf::sym sym : section.as_symtab()) {
+            if (sym.get_name() == name) {
+                const elf::Sym<> &data = sym.get_data();
+                symbol_type st = to_symbol_type(data.type());
+                symbols.push_back(symbol {st, sym.get_name(), data.value});
+            }
+        }
+    }
+
+    return symbols;
 }
 
 int main(int argc, char **argv) {

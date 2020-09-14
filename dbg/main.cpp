@@ -252,6 +252,7 @@ private:
     dwarf::die get_function_from_pc(uint64_t pc);
     dwarf::line_table::iterator get_line_entry_from_pc(uint64_t pc);
     void print_source(const std::string &filename, unsigned line, unsigned n_lines_context = 2);
+    void print_backtrace();
     siginfo_t get_signal_info();
     void handle_sigtrap(siginfo_t info);
     std::vector<symbol> lookup_symbol(const std::string &name);
@@ -354,6 +355,8 @@ void debugger::handle_command(const std::string &line) {
             std::cout << sym.name << ' ' << to_string(sym.type)
                       << " 0x" << std::hex << sym.address << std::endl;
         }
+    } else if (is_prefix(command, "backtrace")) {
+        print_backtrace();
     } else {
         std::cerr << "Unknown command" << std::endl;
     }
@@ -614,6 +617,27 @@ void debugger::print_source(const std::string &filename, unsigned line, unsigned
     }
 
     std::cout << std::endl;
+}
+
+void debugger::print_backtrace() {
+    auto print_frame = [frame_number = 0](dwarf::die &func) mutable {
+        std::cout << "frame #" << frame_number << ": 0x" << dwarf::at_low_pc(func)
+                  << ' ' << dwarf::at_name(func) << std::endl;
+        frame_number++;
+    };
+
+    dwarf::die current_func = get_function_from_pc(get_pc());
+    print_frame(current_func);
+
+    uint64_t frame_pointer = get_register_value(m_pid, reg::rbp);
+    uint64_t return_address = read_memory(frame_pointer + sizeof(uint64_t));
+
+    while (dwarf::at_name(current_func) != "main") {
+        current_func = get_function_from_pc(return_address);
+        print_frame(current_func);
+        frame_pointer = read_memory(frame_pointer);
+        return_address = read_memory(frame_pointer + sizeof(uint64_t));
+    }
 }
 
 siginfo_t debugger::get_signal_info() {

@@ -172,6 +172,28 @@ struct symbol {
     std::uintptr_t address;
 };
 
+class ptrace_expr_context : public dwarf::expr_context {
+    public:
+        ptrace_expr_context(pid_t pid) : m_pid{pid} {}
+
+        dwarf::taddr reg(unsigned regnum) override {
+            return get_register_value_from_dwarf_register(m_pid, regnum);
+        }
+
+        dwarf::taddr pc() override {
+            struct user_regs_struct regs;
+            ptrace(PTRACE_GETREGS, m_pid, nullptr, &regs);
+            return regs.rip;
+        }
+
+        dwarf::taddr deref_size(dwarf::taddr address, unsigned size) override {
+            return ptrace(PTRACE_PEEKDATA, m_pid, address, nullptr);
+        }
+
+    private:
+        pid_t m_pid;
+};
+
 class breakpoint {
 public:
     breakpoint(pid_t pid, std::intptr_t address)
@@ -256,6 +278,7 @@ private:
     siginfo_t get_signal_info();
     void handle_sigtrap(siginfo_t info);
     std::vector<symbol> lookup_symbol(const std::string &name);
+    void read_variables();
 };
 
 void debugger::run() {
@@ -357,6 +380,8 @@ void debugger::handle_command(const std::string &line) {
         }
     } else if (is_prefix(command, "backtrace")) {
         print_backtrace();
+    } else if (is_prefix(command, "variables")) {
+        read_variables();
     } else {
         std::cerr << "Unknown command" << std::endl;
     }
@@ -687,6 +712,44 @@ std::vector<symbol> debugger::lookup_symbol(const std::string &name) {
     }
 
     return symbols;
+}
+
+void debugger::read_variables() {
+    dwarf::die func = get_function_from_pc(get_pc());
+
+    for (const dwarf::die &die : func) {
+        if (die.tag != dwarf::DW_TAG::variable) {
+            continue;
+        }
+
+        dwarf::value loc_val = die[dwarf::DW_AT::location];
+
+        if (loc_val.get_type() != dwarf::value::type::exprloc) {
+            continue;
+        }
+
+        ptrace_expr_context context {m_pid};
+        dwarf::expr_result result = loc_val.as_exprloc().evaluate(&context);
+
+        switch (result.location_type) {
+            case dwarf::expr_result::type::address: {
+                uint64_t value = read_memory(result.value);
+                std::cout << at_name(die) << " (0x" << std::hex << result.value << ") = "
+                          << value << std::endl;
+                break;
+            }
+
+            case dwarf::expr_result::type::reg: {
+                uint64_t value = get_register_value_from_dwarf_register(m_pid, result.value);
+                std::cout << at_name(die) << " (reg " << result.value << ") = "
+                          << value << std::endl;
+                break;
+            }
+
+            default:
+                throw std::runtime_error("Unhandled variable location");
+        }
+    }
 }
 
 int main(int argc, char **argv) {

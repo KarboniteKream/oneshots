@@ -1,4 +1,4 @@
-OPTS = -no-pie -fno-omit-frame-pointer -g
+OPTS = -no-pie -fno-omit-frame-pointer -gdwarf-2 -O0
 
 all: func hello variables
 

@@ -33,3 +33,16 @@ def get_object(oid, expected="blob"):
         assert type == expected, f"Expected {expected}, got {type}"
 
     return content
+
+
+def set_head(oid):
+    with open(f"{UGIT_DIR}/HEAD", "w") as f:
+        f.write(oid)
+
+
+def get_head():
+    head = f"{UGIT_DIR}/HEAD"
+
+    if os.path.isfile(head):
+        with open(head) as f:
+            return f.read().strip()

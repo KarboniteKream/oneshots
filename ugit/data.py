@@ -35,14 +35,17 @@ def get_object(oid, expected="blob"):
     return content
 
 
-def set_head(oid):
-    with open(f"{UGIT_DIR}/HEAD", "w") as f:
+def update_ref(ref, oid):
+    ref_path = f"{UGIT_DIR}/{ref}"
+    os.makedirs(os.path.dirname(ref_path), exist_ok=True)
+
+    with open(ref_path, "w") as f:
         f.write(oid)
 
 
-def get_head():
-    head = f"{UGIT_DIR}/HEAD"
+def get_ref(ref):
+    ref_path = f"{UGIT_DIR}/{ref}"
 
-    if os.path.isfile(head):
-        with open(head) as f:
+    if os.path.isfile(ref_path):
+        with open(ref_path) as f:
             return f.read().strip()

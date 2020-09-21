@@ -59,7 +59,7 @@ def get_ref(ref, deref=True):
     return _get_ref(ref, deref=deref)[1]
 
 
-def iter_refs(deref=True):
+def iter_refs(prefix="", deref=True):
     refs = ["HEAD"]
 
     for root, _, filenames in os.walk(f"{UGIT_DIR}/refs"):
@@ -67,6 +67,9 @@ def iter_refs(deref=True):
         refs.extend(f"{root}/{name}" for name in filenames)
 
     for name in refs:
+        if not name.startswith(prefix):
+            continue
+
         yield name, get_ref(name, deref=deref)
 
 

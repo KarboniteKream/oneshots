@@ -200,5 +200,24 @@ def create_branch(name, oid):
     data.update_ref(f"refs/heads/{name}", data.RefValue(symbolic=False, value=oid))
 
 
+def get_branch_name():
+    head = data.get_ref("HEAD", deref=False)
+    if not head.symbolic:
+        return None
+
+    head = head.value
+    assert head.startswith("refs/heads/")
+    return os.path.relpath(head, "refs/heads")
+
+
+def iter_branch_names():
+    for name, _ in data.iter_refs("refs/heads"):
+        yield os.path.relpath(name, "refs/heads")
+
+
+def reset(oid):
+    data.update_ref("HEAD", data.RefValue(symbolic=False, value=oid))
+
+
 def _is_branch(name):
     return data.get_ref(f"refs/heads/{name}").value is not None

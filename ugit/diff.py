@@ -1,7 +1,7 @@
 import subprocess
 
 from collections import defaultdict
-from tempfile import NamedTemporaryFile
+from tempfile import NamedTemporaryFile as Temp
 
 import data
 
@@ -17,7 +17,7 @@ def diff_trees(t_from, t_to):
 
 
 def diff_blobs(o_from, o_to, path="blob"):
-    with NamedTemporaryFile() as f_from, NamedTemporaryFile() as f_to:
+    with Temp() as f_from, Temp() as f_to:
         for oid, f in ((o_from, f_from), (o_to, f_to)):
             if oid:
                 f.write(data.get_object(oid))
@@ -45,27 +45,30 @@ def iter_changed_files(t_from, t_to):
             yield path, action
 
 
-def merge_trees(t_head, t_other):
+def merge_trees(t_base, t_head, t_other):
     tree = {}
 
-    for path, o_head, o_other in _compare_trees(t_head, t_other):
-        tree[path] = merge_blobs(o_head, o_other)
+    for path, o_base, o_head, o_other in _compare_trees(t_base, t_head, t_other):
+        tree[path] = merge_blobs(o_base, o_head, o_other)
 
     return tree
 
 
-def merge_blobs(o_head, o_other):
-    with NamedTemporaryFile() as f_head, NamedTemporaryFile() as f_other:
-        for oid, f in ((o_head, f_head), (o_other, f_other)):
+def merge_blobs(o_base, o_head, o_other):
+    with Temp() as f_base, Temp() as f_head, Temp() as f_other:
+        for oid, f in ((o_base, f_base), (o_head, f_head), (o_other, f_other)):
             if oid:
                 f.write(data.get_object(oid))
                 f.flush()
 
         with subprocess.Popen([
-            "diff", "-DHEAD",
-            f_head.name, f_other.name,
+            "diff3", "-m",
+            "-L", "HEAD", f_head.name,
+            "-L", "BASE", f_base.name,
+            "-L", "MERGE_HEAD", f_other.name,
         ], stdout=subprocess.PIPE) as proc:
             output, _ = proc.communicate()
+            assert proc.returncode in (0, 1)
 
         return output
 

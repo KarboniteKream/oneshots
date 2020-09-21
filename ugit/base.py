@@ -56,10 +56,16 @@ def read_tree(tree_oid):
             f.write(data.get_object(oid))
 
 
-def read_tree_merged(t_head, t_other):
+def read_tree_merged(t_base, t_head, t_other):
     _empty_current_directory()
 
-    for path, blob in diff.merge_trees(get_tree(t_head), get_tree(t_other)).items():
+    merged_trees = diff.merge_trees(
+        get_tree(t_base),
+        get_tree(t_head),
+        get_tree(t_other),
+    )
+
+    for path, blob in merged_trees.items():
         os.makedirs(f"./{os.path.dirname(path)}", exist_ok=True)
         with open(path, "wb") as f:
             f.write(blob)
@@ -223,13 +229,30 @@ def merge(other):
     head = data.get_ref("HEAD").value
     assert head
 
-    c_head = get_commit(head)
+    base = get_merge_base(other, head)
     c_other = get_commit(other)
+    ref = data.RefValue(symbolic=False, value=other)
 
-    data.update_ref("MERGE_HEAD", data.RefValue(symbolic=False, value=other))
+    if base == head:
+        read_tree(c_other.tree)
+        data.update_ref("HEAD", ref)
+        print("Fast-forward merge, no need to commit")
+        return
 
-    read_tree_merged(c_head.tree, c_other.tree)
+    data.update_ref("MERGE_HEAD", ref)
+
+    c_base = get_commit(base)
+    c_head = get_commit(head)
+    read_tree_merged(c_base.tree, c_head.tree, c_other.tree)
     print("Merged in working tree\nPlease commit")
+
+
+def get_merge_base(oid1, oid2):
+    parents = list(iter_commits_and_parents({oid1}))
+
+    for oid in iter_commits_and_parents({oid2}):
+        if oid in parents:
+            return oid
 
 
 def _is_ignored(path):

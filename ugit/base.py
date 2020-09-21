@@ -11,6 +11,11 @@ import data
 Commit = namedtuple("Commit", ["tree", "parent", "message"])
 
 
+def init():
+    data.init()
+    data.update_ref("HEAD", data.RefValue(symbolic=True, value="refs/heads/master"))
+
+
 def write_tree(directory=os.getcwd()):
     entries = []
 
@@ -53,7 +58,7 @@ def read_tree(tree_oid):
 def commit(message):
     commit = f"tree {write_tree()}\n"
 
-    head = data.get_ref("HEAD")
+    head = data.get_ref("HEAD").value
     if head:
         commit += f"parent {head}\n"
 
@@ -61,7 +66,7 @@ def commit(message):
     commit += f"{message}\n"
 
     oid = data.hash_object(commit.encode(), "commit")
-    data.update_ref("HEAD", oid)
+    data.update_ref("HEAD", data.RefValue(symbolic=False, value=oid))
     return oid
 
 
@@ -97,8 +102,8 @@ def get_oid(name):
     ]
 
     for ref in refs_to_try:
-        if data.get_ref(ref):
-            return data.get_ref(ref)
+        if data.get_ref(ref, deref=False).value:
+            return data.get_ref(ref).value
 
     if len(name) == 40 and all(c in string.hexdigits for c in name):
         return name
@@ -174,11 +179,26 @@ def _empty_current_directory():
         os.rmdir(root)
 
 
-def checkout(oid):
+def checkout(name):
+    oid = get_oid(name)
     commit = get_commit(oid)
     read_tree(commit.tree)
-    data.update_ref("HEAD", oid)
+
+    if _is_branch(name):
+        head = data.RefValue(symbolic=True, value=f"refs/heads/{name}")
+    else:
+        head = data.RefValue(symbolic=False, value=oid)
+
+    data.update_ref("HEAD", head, deref=False)
 
 
 def create_tag(name, oid):
-    data.update_ref(f"refs/tags/{name}", oid)
+    data.update_ref(f"refs/tags/{name}", data.RefValue(symbolic=False, value=oid))
+
+
+def create_branch(name, oid):
+    data.update_ref(f"refs/heads/{name}", data.RefValue(symbolic=False, value=oid))
+
+
+def _is_branch(name):
+    return data.get_ref(f"refs/heads/{name}").value is not None

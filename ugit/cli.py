@@ -79,6 +79,10 @@ def parse_args():
     reset_parser.set_defaults(func=reset)
     reset_parser.add_argument("commit", type=oid)
 
+    merge_parser = commands.add_parser("merge")
+    merge_parser.set_defaults(func=merge)
+    merge_parser.add_argument("commit", type=oid)
+
     return parser.parse_args()
 
 
@@ -124,18 +128,20 @@ def show(args):
 
     commit = base.get_commit(args.oid)
     parent_tree = None
-    if commit.parent:
-        parent_tree = base.get_commit(commit.parent).tree
+    if commit.parents:
+        parent_tree = base.get_commit(commit.parents[0]).tree
 
     _print_commit(args.oid, commit)
     result = diff.diff_trees(base.get_tree(parent_tree), base.get_tree(commit.tree))
-    print(result, end="")
+    sys.stdout.flush()
+    sys.stdout.buffer.write(result)
 
 
 def diff_(args):
     tree = args.commit and base.get_commit(args.commit).tree
     result = diff.diff_trees(base.get_tree(tree), base.get_working_tree())
-    print(result, end="")
+    sys.stdout.flush()
+    sys.stdout.buffer.write(result)
 
 
 def checkout(args):
@@ -172,10 +178,11 @@ def k(args):
         commit = base.get_commit(oid)
         dot += f'"{oid}" [shape="box" style="filled" label="{oid[:10]}"]\n'
 
-        if commit.parent:
-            dot += f'"{oid}" -> "{commit.parent}"\n'
+        for parent in commit.parents:
+            dot += f'"{oid}" -> "{parent}"\n'
 
     dot += "}"
+    print(dot)
 
     with subprocess.Popen(['dot', '-Tgtk', '/dev/stdin'], stdin=subprocess.PIPE) as proc:
         proc.communicate(dot.encode())
@@ -190,6 +197,10 @@ def status(args):
     else:
         print(f"HEAD detached at {head[:10]}")
 
+    merge_head = data.get_ref("MERGE_HEAD").value
+    if merge_head:
+        print(f"Merging with {merge_head[:10]}")
+
     print("\nChanges to be commited:")
     head_tree = base.get_tree(head and base.get_commit(head).tree)
 
@@ -199,6 +210,10 @@ def status(args):
 
 def reset(args):
     base.reset(args.commit)
+
+
+def merge(args):
+    base.merge(args.commit)
 
 
 def _print_commit(oid, commit, refs=None):

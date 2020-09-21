@@ -6,9 +6,10 @@ import string
 from collections import deque, namedtuple
 
 import data
+import diff
 
 
-Commit = namedtuple("Commit", ["tree", "parent", "message"])
+Commit = namedtuple("Commit", ["tree", "parents", "message"])
 
 
 def init():
@@ -48,11 +49,20 @@ def write_tree(directory=os.getcwd()):
 def read_tree(tree_oid):
     _empty_current_directory()
 
-    for path, oid in _get_tree(tree_oid, os.getcwd()).items():
+    for path, oid in get_tree(tree_oid, os.getcwd()).items():
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
         with open(path, "wb") as f:
             f.write(data.get_object(oid))
+
+
+def read_tree_merged(t_head, t_other):
+    _empty_current_directory()
+
+    for path, blob in diff.merge_trees(get_tree(t_head), get_tree(t_other)).items():
+        os.makedirs(f"./{os.path.dirname(path)}", exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(blob)
 
 
 def commit(message):
@@ -61,6 +71,11 @@ def commit(message):
     head = data.get_ref("HEAD").value
     if head:
         commit += f"parent {head}\n"
+
+    merge_head = data.get_ref("MERGE_HEAD").value
+    if merge_head:
+        commit += f"parent {merge_head}\n"
+        data.delete_ref("MERGE_HEAD", deref=False)
 
     commit += "\n"
     commit += f"{message}\n"
@@ -71,7 +86,7 @@ def commit(message):
 
 
 def get_commit(oid):
-    parent = None
+    parents = []
 
     commit = data.get_object(oid, "commit").decode()
     lines = iter(commit.splitlines())
@@ -82,12 +97,12 @@ def get_commit(oid):
         if key == "tree":
             tree = value
         elif key == "parent":
-            parent = value
+            parents.append(value)
         else:
             assert False, f"Unknown field {key}"
 
     message = "\n".join(lines)
-    return Commit(tree=tree, parent=parent, message=message)
+    return Commit(tree=tree, parents=parents, message=message)
 
 
 def get_oid(name):
@@ -125,7 +140,8 @@ def iter_commits_and_parents(oids):
         yield oid
 
         commit = get_commit(oid)
-        oids.appendleft(commit.parent)
+        oids.extendleft(commit.parents[:1])
+        oids.extend(commit.parents[1:])
 
 
 def get_tree(oid, base_path=""):
@@ -201,6 +217,19 @@ def get_working_tree():
                 result[path] = data.hash_object(f.read())
 
     return result
+
+
+def merge(other):
+    head = data.get_ref("HEAD").value
+    assert head
+
+    c_head = get_commit(head)
+    c_other = get_commit(other)
+
+    data.update_ref("MERGE_HEAD", data.RefValue(symbolic=False, value=other))
+
+    read_tree_merged(c_head.tree, c_other.tree)
+    print("Merged in working tree\nPlease commit")
 
 
 def _is_ignored(path):

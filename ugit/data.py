@@ -60,7 +60,7 @@ def get_ref(ref, deref=True):
 
 
 def iter_refs(prefix="", deref=True):
-    refs = ["HEAD"]
+    refs = ["HEAD", "MERGE_HEAD"]
 
     for root, _, filenames in os.walk(f"{UGIT_DIR}/refs"):
         root = os.path.relpath(root, UGIT_DIR)
@@ -70,7 +70,15 @@ def iter_refs(prefix="", deref=True):
         if not name.startswith(prefix):
             continue
 
-        yield name, get_ref(name, deref=deref)
+        ref = get_ref(name, deref=deref)
+
+        if ref.value:
+            yield name, ref
+
+
+def delete_ref(ref, deref=True):
+    ref = _get_ref(ref, deref=deref)[0]
+    os.remove(f"{UGIT_DIR}/{ref}")
 
 
 def _get_ref(ref, deref):

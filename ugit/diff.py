@@ -1,12 +1,13 @@
-import difflib
+import subprocess
 
 from collections import defaultdict
+from tempfile import NamedTemporaryFile
 
 import data
 
 
 def diff_trees(t_from, t_to):
-    output = ""
+    output = b""
 
     for path, o_from, o_to in _compare_trees(t_from, t_to):
         if o_from != o_to:
@@ -16,15 +17,20 @@ def diff_trees(t_from, t_to):
 
 
 def diff_blobs(o_from, o_to, path="blob"):
-    c_from = data.get_object(o_from).decode()
-    c_to = data.get_object(o_to).decode()
+    with NamedTemporaryFile() as f_from, NamedTemporaryFile() as f_to:
+        for oid, f in ((o_from, f_from), (o_to, f_to)):
+            if oid:
+                f.write(data.get_object(oid))
+                f.flush()
 
-    return "".join(difflib.unified_diff(
-        c_from.splitlines(keepends=True),
-        c_to.splitlines(keepends=True),
-        fromfile=f"a/{path}",
-        tofile=f"b/{path}"
-    ))
+        with subprocess.Popen([
+            "diff", "--unified", "--show-c-function",
+            "--label", f"a/{path}", f_from.name,
+            "--label", f"b/{path}", f_to.name,
+        ], stdout=subprocess.PIPE) as proc:
+            output, _ = proc.communicate()
+
+        return output
 
 
 def iter_changed_files(t_from, t_to):
@@ -37,6 +43,31 @@ def iter_changed_files(t_from, t_to):
             )
 
             yield path, action
+
+
+def merge_trees(t_head, t_other):
+    tree = {}
+
+    for path, o_head, o_other in _compare_trees(t_head, t_other):
+        tree[path] = merge_blobs(o_head, o_other)
+
+    return tree
+
+
+def merge_blobs(o_head, o_other):
+    with NamedTemporaryFile() as f_head, NamedTemporaryFile() as f_other:
+        for oid, f in ((o_head, f_head), (o_other, f_other)):
+            if oid:
+                f.write(data.get_object(oid))
+                f.flush()
+
+        with subprocess.Popen([
+            "diff", "-DHEAD",
+            f_head.name, f_other.name,
+        ], stdout=subprocess.PIPE) as proc:
+            output, _ = proc.communicate()
+
+        return output
 
 
 def _compare_trees(*trees):

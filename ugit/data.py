@@ -49,3 +49,14 @@ def get_ref(ref):
     if os.path.isfile(ref_path):
         with open(ref_path) as f:
             return f.read().strip()
+
+
+def iter_refs():
+    refs = ["HEAD"]
+
+    for root, _, filenames in os.walk(f"{UGIT_DIR}/refs"):
+        root = os.path.relpath(root, UGIT_DIR)
+        refs.extend(f"{root}/{name}" for name in filenames)
+
+    for name in refs:
+        yield name, get_ref(name)

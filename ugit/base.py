@@ -3,7 +3,7 @@ import operator
 import os
 import string
 
-from collections import namedtuple
+from collections import deque, namedtuple
 
 import data
 
@@ -106,6 +106,23 @@ def get_oid(name):
     assert False, f"Unknown name {name}"
 
 
+def iter_commits_and_parents(oids):
+    oids = deque(oids)
+    visited = set()
+
+    while oids:
+        oid = oids.popleft()
+
+        if not oid or oid in visited:
+            continue
+
+        visited.add(oid)
+        yield oid
+
+        commit = get_commit(oid)
+        oids.appendleft(commit.parent)
+
+
 def _is_ignored(path):
     return ".ugit" in path.split("/")
 
@@ -113,7 +130,7 @@ def _is_ignored(path):
 def _get_tree(oid, base_path=""):
     result = {}
 
-    for type, oid, name in _tree_entries(oid):
+    for type, oid, name in _iter_tree_entries(oid):
         assert "/" not in name
         assert name not in [".", ".."]
 
@@ -129,7 +146,7 @@ def _get_tree(oid, base_path=""):
     return result
 
 
-def _tree_entries(oid):
+def _iter_tree_entries(oid):
     if not oid:
         return
 

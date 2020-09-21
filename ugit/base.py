@@ -128,11 +128,7 @@ def iter_commits_and_parents(oids):
         oids.appendleft(commit.parent)
 
 
-def _is_ignored(path):
-    return ".ugit" in path.split("/")
-
-
-def _get_tree(oid, base_path=""):
+def get_tree(oid, base_path=""):
     result = {}
 
     for type, oid, name in _iter_tree_entries(oid):
@@ -144,39 +140,11 @@ def _get_tree(oid, base_path=""):
         if type == "blob":
             result[path] = oid
         elif type == "tree":
-            result.update(_get_tree(oid, f"{path}/"))
+            result.update(get_tree(oid, f"{path}/"))
         else:
             assert False, f"Unknown tree entry {type}"
 
     return result
-
-
-def _iter_tree_entries(oid):
-    if not oid:
-        return
-
-    tree = data.get_object(oid, "tree")
-
-    for entry in tree.decode().splitlines():
-        yield entry.split(" ", 2)
-
-
-def _empty_current_directory():
-    cwd = os.getcwd()
-
-    for root, _, filenames in os.walk(cwd):
-        for filename in filenames:
-            path = os.path.relpath(f"{root}/{filename}")
-
-            if _is_ignored(path) or not os.path.isfile(path):
-                continue
-
-            os.remove(path)
-
-        if _is_ignored(root) or os.path.samefile(root, cwd):
-            continue
-
-        os.rmdir(root)
 
 
 def checkout(name):
@@ -217,6 +185,54 @@ def iter_branch_names():
 
 def reset(oid):
     data.update_ref("HEAD", data.RefValue(symbolic=False, value=oid))
+
+
+def get_working_tree():
+    result = {}
+
+    for root, _, filenames in os.walk(os.getcwd()):
+        for filename in filenames:
+            path = os.path.relpath(f"{root}/{filename}")
+
+            if _is_ignored(path) or not os.path.isfile(path):
+                continue
+
+            with open(path, "rb") as f:
+                result[path] = data.hash_object(f.read())
+
+    return result
+
+
+def _is_ignored(path):
+    return ".ugit" in path.split("/")
+
+
+def _iter_tree_entries(oid):
+    if not oid:
+        return
+
+    tree = data.get_object(oid, "tree")
+
+    for entry in tree.decode().splitlines():
+        yield entry.split(" ", 2)
+
+
+def _empty_current_directory():
+    cwd = os.getcwd()
+
+    for root, _, filenames in os.walk(cwd):
+        for filename in filenames:
+            path = os.path.relpath(f"{root}/{filename}")
+
+            if _is_ignored(path) or not os.path.isfile(path):
+                continue
+
+            os.remove(path)
+
+        if _is_ignored(root) or os.path.samefile(root, cwd):
+            continue
+
+        os.rmdir(root)
 
 
 def _is_branch(name):

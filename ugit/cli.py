@@ -5,6 +5,7 @@ import textwrap
 
 import base
 import data
+import diff
 
 
 def main():
@@ -45,6 +46,14 @@ def parse_args():
     log_parser = commands.add_parser("log")
     log_parser.set_defaults(func=log)
     log_parser.add_argument("oid", default="@", type=oid, nargs="?")
+
+    show_parser = commands.add_parser("show")
+    show_parser.set_defaults(func=show)
+    show_parser.add_argument("oid", default="@", type=oid, nargs="?")
+
+    diff_parser = commands.add_parser("diff")
+    diff_parser.set_defaults(func=diff_)
+    diff_parser.add_argument("commit", default="@", type=oid, nargs="?")
 
     checkout_parser = commands.add_parser("checkout")
     checkout_parser.set_defaults(func=checkout)
@@ -106,11 +115,27 @@ def log(args):
 
     for oid in base.iter_commits_and_parents({args.oid}):
         commit = base.get_commit(oid)
+        _print_commit(oid, commit, refs.get(oid))
 
-        refs = f' ({", ".join(refs[oid])})' if oid in refs else ""
-        print(f"commit {oid}{refs}\n")
-        print(textwrap.indent(commit.message, "    "))
-        print()
+
+def show(args):
+    if not args.oid:
+        return
+
+    commit = base.get_commit(args.oid)
+    parent_tree = None
+    if commit.parent:
+        parent_tree = base.get_commit(commit.parent).tree
+
+    _print_commit(args.oid, commit)
+    result = diff.diff_trees(base.get_tree(parent_tree), base.get_tree(commit.tree))
+    print(result, end="")
+
+
+def diff_(args):
+    tree = args.commit and base.get_commit(args.commit).tree
+    result = diff.diff_trees(base.get_tree(tree), base.get_working_tree())
+    print(result, end="")
 
 
 def checkout(args):
@@ -165,6 +190,19 @@ def status(args):
     else:
         print(f"HEAD detached at {head[:10]}")
 
+    print("\nChanges to be commited:")
+    head_tree = base.get_tree(head and base.get_commit(head).tree)
+
+    for path, action in diff.iter_changed_files(head_tree, base.get_working_tree()):
+        print(f"{action:>12}: {path}")
+
 
 def reset(args):
     base.reset(args.commit)
+
+
+def _print_commit(oid, commit, refs=None):
+    refs_str = f' ({", ".join(refs)})' if refs else ""
+    print(f"commit {oid}{refs_str}\n")
+    print(textwrap.indent(commit.message, "    "))
+    print()

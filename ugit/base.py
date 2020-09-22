@@ -306,6 +306,11 @@ def add(filenames):
                 add_directory(name)
 
 
+def get_index_tree():
+    with data.get_index() as index:
+        return index
+
+
 def _is_ignored(path):
     return ".ugit" in path.split("/")
 

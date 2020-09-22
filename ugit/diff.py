@@ -49,7 +49,7 @@ def merge_trees(t_base, t_head, t_other):
     tree = {}
 
     for path, o_base, o_head, o_other in _compare_trees(t_base, t_head, t_other):
-        tree[path] = merge_blobs(o_base, o_head, o_other)
+        tree[path] = data.hash_object(merge_blobs(o_base, o_head, o_other))
 
     return tree
 

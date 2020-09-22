@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import shutil
 
@@ -18,6 +19,21 @@ def change_git_dir(new_dir):
     UGIT_DIR = f"{new_dir}/.ugit"
     yield
     UGIT_DIR=old_dir
+
+
+@contextmanager
+def get_index():
+    index_path = f"{UGIT_DIR}/index"
+    index = {}
+
+    if os.path.isfile(index_path):
+        with open(index_path) as f:
+            index = json.load(f)
+
+    yield index
+
+    with open(index_path, "w") as f:
+        json.dump(index, f)
 
 
 def init():
@@ -60,6 +76,11 @@ def fetch_object_if_missing(oid, remote_git_dir):
 
     remote_git_dir += "/.ugit"
     shutil.copy(f"{remote_git_dir}/objects/{oid}", f"{UGIT_DIR}/objects/{oid}")
+
+
+def push_object(oid, remote_git_dir):
+    remote_git_dir += "/.ugit"
+    shutil.copy(f"{UGIT_DIR}/objects/{oid}", f"{remote_git_dir}/objects/{oid}")
 
 
 def update_ref(ref, value, deref=True):

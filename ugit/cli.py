@@ -95,6 +95,15 @@ def parse_args():
     fetch_parser.set_defaults(func=fetch)
     fetch_parser.add_argument("remote")
 
+    push_parser = commands.add_parser("push")
+    push_parser.set_defaults(func=push)
+    push_parser.add_argument("remote")
+    push_parser.add_argument("branch")
+
+    add_parser = commands.add_parser("add")
+    add_parser.set_defaults(func=add)
+    add_parser.add_argument("files", nargs="+")
+
     return parser.parse_args()
 
 
@@ -234,6 +243,14 @@ def merge_base(args):
 
 def fetch(args):
     remote.fetch(args.remote)
+
+
+def push(args):
+    remote.push(args.remote, f"refs/heads/{args.branch}")
+
+
+def add(args):
+    base.add(args.files)
 
 
 def _print_commit(oid, commit, refs=None):

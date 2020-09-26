@@ -24,8 +24,8 @@ def push(remote_path, name):
     assert local_ref
 
     remote_refs = _get_remote_refs(remote_path)
-    # remote_ref = remote_refs.get(name)
-    # assert not remote_ref or base.is_ancestor_of(local_ref, remote_ref)
+    remote_ref = remote_refs.get(name)
+    assert not remote_ref or base.is_ancestor_of(local_ref, remote_ref)
 
     known_remote_refs = filter(data.object_exists, remote_refs.values())
     remote_objects = set(base.iter_objects_in_commits(known_remote_refs))

@@ -283,6 +283,10 @@ def get_merge_base(oid1, oid2):
             return oid
 
 
+def is_ancestor_of(commit, maybe_ancestor):
+    return maybe_ancestor in iter_commits_and_parents({commit})
+
+
 def add(filenames):
     def add_file(filename):
         filename = os.path.relpath(filename)
@@ -340,7 +344,10 @@ def _empty_current_directory():
         if _is_ignored(root) or os.path.samefile(root, cwd):
             continue
 
-        os.rmdir(root)
+        try:
+            os.rmdir(root)
+        except (FileNotFoundError, OSError):
+            pass
 
 
 def _is_branch(name):

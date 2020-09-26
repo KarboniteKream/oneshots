@@ -56,9 +56,8 @@ def get_object(oid, expected="blob"):
     with open(f"{UGIT_DIR}/objects/{oid}", "rb") as f:
         obj = f.read()
 
-    first_null = obj.index(b"\x00")
-    type = obj[:first_null].decode()
-    content = obj[first_null + 1:]
+    type, _, content = obj.partition(b'\x00')
+    type = type.decode()
 
     if expected is not None:
         assert type == expected, f"Expected {expected}, got {type}"
